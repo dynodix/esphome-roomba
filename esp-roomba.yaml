@@ -1,0 +1,160 @@
+substitutions:
+  name: "esp-roomba"
+  friendly_name: esp-roomba
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  name_add_mac_suffix: false
+  platformio_options:
+    board_build.flash_mode: dio
+  project:
+    name: esphome.web
+    version: "1.0"
+  libraries:
+    - EspSoftwareSerial
+    - Roomba=https://github.com/davidecavestro/Roomba.git
+
+external_components:
+  - source:
+      type: local
+      path: /config/esphome/components
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: arduino
+
+logger:
+
+api:
+  services:
+    - service: roomba_start
+      then:
+        - lambda: |-
+            id(roomba1).on_command("start");
+
+    - service: roomba_stop
+      then:
+        - lambda: |-
+            id(roomba1).on_command("stop");
+
+    - service: roomba_dock
+      then:
+        - lambda: |-
+            id(roomba1).on_command("dock");
+
+    - service: roomba_locate
+      then:
+        - lambda: |-
+            id(roomba1).on_command("locate");
+
+    - service: roomba_spot
+      then:
+        - lambda: |-
+            id(roomba1).on_command("spot");
+
+    - service: roomba_wakeup
+      then:
+        - lambda: |-
+            id(roomba1).on_command("wakeup");
+
+
+
+ota:
+  platform: esphome
+
+improv_serial:
+
+wifi:
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+    - ssid: !secret wifi_ssid_2
+      password: !secret wifi_password_2
+    - ssid: !secret wifi_ssid_3
+      password: !secret wifi_password_3
+
+captive_portal:
+
+dashboard_import:
+  package_import_url: github://esphome/firmware/esphome-web/esp32s3.yaml@v2
+  import_full_config: true
+
+esp32_improv:
+  authorizer: none
+
+web_server:
+
+# External Roomba component configuration
+roomba:
+  id: roomba1
+  brc_pin: 9
+  rx_pin: 8
+  tx_pin: 7
+  baud: 115200
+  update_interval: 30s
+
+sensor:
+  - platform: roomba
+    id: roomba1
+    distance:
+      name: "${name} distance"
+      unit_of_measurement: "mm"
+      accuracy_decimals: 0
+    voltage:
+      name: "${name} voltage"
+      unit_of_measurement: "mV"
+      accuracy_decimals: 0
+    current:
+      name: "${name} current"
+      unit_of_measurement: "mA"
+      accuracy_decimals: 0
+    charge:
+      name: "${name} charge"
+      unit_of_measurement: "mAh"
+      accuracy_decimals: 0
+    capacity:
+      name: "${name} capacity"
+      unit_of_measurement: "mAh"
+      accuracy_decimals: 0
+    battery:
+      name: "${name} battery"
+      unit_of_measurement: "%"
+      accuracy_decimals: 0
+    temperature:
+      name: "${name} temperature"
+      unit_of_measurement: "°C"
+      accuracy_decimals: 0
+
+text_sensor:
+  - platform: roomba
+    id: roomba1
+    activity:
+      name: "${name} activity"
+
+  - platform: wifi_info
+    ip_address:
+      name: "ESP Roomba IP"
+
+button:
+  - platform: template
+    name: "Locate"
+    on_press:
+      - lambda: |-
+          id(roomba1).on_command("locate");
+
+  - platform: template
+    name: "Start/Stop"
+    on_press:
+      - lambda: |-
+          id(roomba1).on_command("start");
+
+  - platform: template
+    name: "Dock"
+    on_press:
+      - lambda: |-
+          id(roomba1).on_command("dock");
+
+  - platform: restart
+    name: "ESP Roomba Restart"
