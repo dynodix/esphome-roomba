@@ -13,7 +13,6 @@ esphome:
     version: "1.0"
   libraries:
     - EspSoftwareSerial
-    - Roomba=https://github.com/davidecavestro/Roomba.git
 
 external_components:
   - source:
@@ -58,8 +57,6 @@ api:
       then:
         - lambda: |-
             id(roomba1).on_command("wakeup");
-
-
 
 ota:
   platform: esphome
