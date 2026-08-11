@@ -96,7 +96,14 @@ void RoombaComponent::setup() {
   // and sends OI START (128). Do not call serial_.begin() separately and do not
   // force SAFE mode here.
   this->roomba_.start();
-  ESP_LOGI(TAG, "Roomba OI START sent at %d baud", this->baud_);
+
+  // Roomba TX is relatively weak. EspSoftwareSerial enables an internal pull-up
+  // on valid ESP32 RX pins by default; disable it so the Roomba can pull the RX
+  // line low reliably.
+  this->serial_.enableRxGPIOPullUp(false);
+
+  ESP_LOGI(TAG, "Roomba OI START sent at %d baud; RX pull-up disabled on GPIO%u",
+           this->baud_, this->rx_pin_);
 }
 
 void RoombaComponent::update() {
