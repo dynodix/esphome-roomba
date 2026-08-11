@@ -1,43 +1,130 @@
 # ESPHome Roomba External Component
 
-An **ESPHome external component** for controlling and monitoring legacy **iRobot Roomba** vacuum cleaners via their **SCI (Serial Command Interface)**.
+An **ESPHome external component** for controlling and monitoring legacy **iRobot Roomba** vacuum cleaners via their **SCI / Open Interface serial connection**.
 
-This project replaces deprecated `custom_component`-based integrations and is fully compatible with **ESPHome 2025.x+**, including **Home Assistant Green**.
-
-It has been tested with **ESP32-S3 DevKitC-1** and Roomba models from the **4xx / 5xx series**.
-
----
+The component is intended as a replacement for older `custom_component`-based ESPHome integrations. It has been tested with an **ESP32-S3 DevKitC-1**, **ESPHome 2026.7.x**, and legacy Roomba models from the **4xx / 5xx series**.
 
 ## Features
 
 ### Control
 - Start / Stop cleaning
-- Dock (return to base)
+- Dock / return to base
 - Spot cleaning
-- Locate (play sound)
-- Wake Roomba via BRC pin
+- Locate by playing a short sound
+- Wake Roomba using the BRC pin
 
 ### Sensors
-- Distance traveled
+- Distance travelled
 - Battery voltage
 - Battery current
 - Battery charge
 - Battery capacity
 - Battery percentage
 - Battery temperature
-- Activity state:
-  - Cleaning
-  - Docked
-  - Charging
-  - Lost
+- Activity state: Cleaning, Docked, Charging or Lost
 
----
+## Installation
 
-## Wiring (Text Schematic)
+The recommended installation method is to load the component directly from this GitHub repository.
 
-### Roomba SCI Mini-DIN 7 (male, notch up)
+```yaml
+esphome:
+  name: esp-roomba
+  libraries:
+    - EspSoftwareSerial
 
+external_components:
+  - source:
+      type: git
+      url: https://github.com/dynodix/esphome-roomba
+      ref: main
+    components:
+      - roomba
+    refresh: 0s
 ```
+
+`refresh: 0s` is useful while developing or testing because ESPHome checks the repository on every build. Once the configuration is stable, it may be omitted to allow the normal external-component cache behaviour.
+
+The old dependency below is **not required and should not be used**:
+
+```yaml
+- Roomba=https://github.com/davidecavestro/Roomba.git
+```
+
+The required Roomba Open Interface wrapper is now included directly in `components/roomba/` as `Roomba.h` and `Roomba.cpp`. `EspSoftwareSerial` remains the only external Arduino library required by this component.
+
+A complete working example is available in [`esp-roomba.yaml`](esp-roomba.yaml).
+
+## Component configuration
+
+```yaml
+roomba:
+  id: roomba1
+  brc_pin: 9
+  rx_pin: 8
+  tx_pin: 7
+  baud: 115200
+  update_interval: 30s
+```
+
+Example sensor configuration:
+
+```yaml
+sensor:
+  - platform: roomba
+    id: roomba1
+    distance:
+      name: "Roomba distance"
+    voltage:
+      name: "Roomba voltage"
+    current:
+      name: "Roomba current"
+    charge:
+      name: "Roomba charge"
+    capacity:
+      name: "Roomba capacity"
+    battery:
+      name: "Roomba battery"
+    temperature:
+      name: "Roomba temperature"
+
+text_sensor:
+  - platform: roomba
+    id: roomba1
+    activity:
+      name: "Roomba activity"
+```
+
+Example buttons:
+
+```yaml
+button:
+  - platform: template
+    name: "Locate"
+    on_press:
+      - lambda: |-
+          id(roomba1).on_command("locate");
+
+  - platform: template
+    name: "Start/Stop"
+    on_press:
+      - lambda: |-
+          id(roomba1).on_command("start");
+
+  - platform: template
+    name: "Dock"
+    on_press:
+      - lambda: |-
+          id(roomba1).on_command("dock");
+```
+
+## Wiring
+
+### Roomba SCI Mini-DIN 7
+
+With the male connector viewed with the notch up:
+
+```text
         _________
        /         \
       |   6   7   |
@@ -46,31 +133,25 @@ It has been tested with **ESP32-S3 DevKitC-1** and Roomba models from the **4xx 
        \____1____/
 ```
 
-| Pin | Signal | Description |
-|----:|--------|-------------|
+| Roomba pin | Signal | Description |
+|---:|---|---|
 | 1 | GND | Ground |
 | 2 | RX | Data to Roomba |
 | 3 | TX | Data from Roomba |
 | 5 | BRC | Wake / baud control |
-| 6 | +5V | 5V power output |
+| 6 | +5V | 5 V power output |
 
----
+### ESP32-S3 DevKitC-1
 
-### ESP32-S3 DevKitC-1 Wiring
-
-| Roomba Pin | Signal | ESP32-S3 Pin |
-|-----------:|--------|--------------|
+| Roomba pin | Signal | ESP32-S3 pin |
+|---:|---|---|
 | 6 | +5V | 5V / VIN |
 | 1 | GND | GND |
 | 3 | TX | GPIO 8 (RX) |
 | 2 | RX | GPIO 7 (TX) |
 | 5 | BRC | GPIO 9 |
 
----
-
-### ASCII Wiring Diagram
-
-```
+```text
 ESP32-S3 DevKitC-1                 Roomba SCI
 ------------------                 ----------
 5V / VIN  <----------------------  +5V (Pin 6)
@@ -80,89 +161,59 @@ GPIO 7 TX ---------------------->  RX  (Pin 2)
 GPIO 9    ---------------------->  BRC (Pin 5)
 ```
 
----
+## Power notes
 
-## Power Notes (IMPORTANT)
+The ESP32-S3 development board may be powered from the Roomba 5 V supply, but Wi-Fi current peaks can cause brownouts.
 
-The ESP32-S3 DevKit board **may be powered from 5V**, but Wi-Fi current peaks can cause brownouts.
-
-**Strongly recommended:**
-- 470–1000 µF electrolytic capacitor between 5V and GND
+Recommended:
+- 470–1000 µF electrolytic capacitor between 5 V and GND
 - 0.1 µF ceramic decoupling capacitor
-- Short wires and solid ground
+- short wiring and a solid common ground
 
-If instability occurs, power the ESP32 via USB instead.
+If instability occurs, power the ESP32 from USB or another suitable regulated supply while keeping the grounds common.
 
----
+## Architecture
 
+The project consists of:
 
-# ESPHome Roomba External Component (Extended Documentation)
+- `components/roomba/__init__.py` — ESPHome configuration schema and code generation
+- `components/roomba/sensor.py` — numeric sensor integration
+- `components/roomba/text_sensor.py` — activity text sensor
+- `components/roomba/roomba_component.cpp/.h` — ESPHome component logic
+- `components/roomba/Roomba.cpp/.h` — embedded minimal Roomba Open Interface wrapper
 
-This document complements the main README and provides background, credits,
-and extended notes for users integrating legacy iRobot Roomba devices with ESPHome.
+This layout avoids the PlatformIO manifest problem of the historical Arduino Roomba repository and allows current ESPHome releases to build the component without separately downloading that library.
 
----
-
-## Background
-
-This project was created to modernize earlier ESPHome Roomba integrations that relied
-on deprecated features such as `custom_component` and C++-registered API services.
-
-ESPHome 2025.x introduced stricter rules around component structure and API usage.
-This external component follows the current best practices and is designed to be
-maintainable across future ESPHome releases.
-
----
-
-## Design Goals
-
-- Full compatibility with ESPHome 2025.x and newer
-- No reliance on removed or deprecated APIs
-- Works on Home Assistant Green without SSH access
-- Clear separation between C++ logic and ESPHome code generation
-- Stable serial communication with legacy Roomba hardware
-
----
-
-## Architecture Overview
-
-- **C++ core**
-  - Implements the Roomba protocol using the Arduino Roomba library
-  - Handles serial communication, wake control (BRC), and sensor polling
-- **Python bindings**
-  - Define ESPHome configuration schema
-  - Bind sensors and text sensors cleanly
-- **YAML integration**
-  - Controls and services defined at YAML level
-  - Avoids C++ service registration issues
-
----
-
-## Compatibility Notes
+## Compatibility
 
 - Tested with Roomba 560
-- Expected to work with most 4xx / 5xx series Roombas
-- Not suitable for newer Wi-Fi-enabled Roomba models
-- Requires access to the Roomba SCI port
+- Expected to work with many legacy 4xx / 5xx series Roombas using the SCI/Open Interface connector
+- Not intended for newer Wi-Fi-only Roomba models without the compatible serial interface
+- Tested with ESP32-S3 DevKitC-1
+- Tested with ESPHome 2026.7.x
 
----
+## Updating
 
-## Credits
+When using the GitHub external component, ESPHome downloads the component automatically. If a build appears to use an older cached version after an update, use **Clean Build Files** in ESPHome and compile again.
 
-This project builds upon the work and documentation of others:
+During active development, retaining:
 
-- iRobot Roomba Open Interface specification
-- Arduino Roomba library by Davide Cavestro  
-  https://github.com/davidecavestro/Roomba
-- ESPHome project and community  
-  https://esphome.io
+```yaml
+refresh: 0s
+```
 
-Earlier community experiments and integrations provided valuable reference material,
-but this implementation is a full rewrite targeting modern ESPHome.
+forces ESPHome to check GitHub on every build.
 
----
+## Credits and licensing
+
+This project builds on:
+
+- iRobot Roomba Open Interface / SCI documentation
+- the Arduino Roomba library originally by Mike McCauley and the Davide Cavestro repository used by the earlier implementation
+- ESPHome and the ESPHome community
+
+The included `Roomba.h` / `Roomba.cpp` wrapper is derived from the historical Arduino Roomba implementation and retains the relevant GPL v2 licensing attribution in its source headers.
 
 ## Disclaimer
 
-This project is not affiliated with or endorsed by iRobot.
-Use at your own risk. Improper wiring or commands may damage hardware.
+This project is not affiliated with or endorsed by iRobot. Use it at your own risk. Incorrect wiring or electrical levels can damage the Roomba or ESP32 hardware.
