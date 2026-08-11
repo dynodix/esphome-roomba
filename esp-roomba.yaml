@@ -16,8 +16,12 @@ esphome:
 
 external_components:
   - source:
-      type: local
-      path: /config/esphome/components
+      type: git
+      url: https://github.com/dynodix/esphome-roomba
+      ref: main
+    components:
+      - roomba
+    refresh: 0s
 
 esp32:
   board: esp32-s3-devkitc-1
