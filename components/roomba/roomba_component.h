@@ -4,7 +4,7 @@
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include <string>
-#include <Roomba.h>
+#include "Roomba.h"
 #include <SoftwareSerial.h>
 
 namespace esphome {
@@ -40,7 +40,6 @@ class RoombaComponent : public PollingComponent {
   uint8_t tx_pin_;
   int baud_;
 
-  // Keep pointers so we can flush serial like your original code
   SoftwareSerial serial_;
   Roomba roomba_;
 
