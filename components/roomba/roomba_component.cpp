@@ -22,7 +22,6 @@ Roomba::Baud RoombaComponent::map_baud_(int baud) {
   }
 }
 
-
 RoombaComponent::RoombaComponent(uint8_t brc_pin, uint8_t rx_pin, uint8_t tx_pin, int baud, uint32_t update_interval_ms)
     : PollingComponent(update_interval_ms),
       brc_pin_(brc_pin),
@@ -33,8 +32,8 @@ RoombaComponent::RoombaComponent(uint8_t brc_pin, uint8_t rx_pin, uint8_t tx_pin
       roomba_(&serial_, this->map_baud_(baud)) {
 }
 
-
 void RoombaComponent::brc_wakeup_() {
+  ESP_LOGD(TAG, "BRC wake pulse on GPIO%u", this->brc_pin_);
   digitalWrite(this->brc_pin_, LOW);
   delay(500);
   digitalWrite(this->brc_pin_, HIGH);
@@ -42,22 +41,32 @@ void RoombaComponent::brc_wakeup_() {
 }
 
 void RoombaComponent::on_command(std::string command) {
+  ESP_LOGI(TAG, "Command requested: %s", command.c_str());
+
+  // Preserve the behavior of the original working ESPHomeRoombaComponent:
+  // wake the Roomba first, then send the requested OI command.
   this->brc_wakeup_();
 
-  if (command == "turn_on" || command == "turn_off" || command == "start" || command == "stop") {
+  if (command == "turn_on" || command == "turn_off" ||
+      command == "start" || command == "stop" || command == "toggle") {
+    ESP_LOGI(TAG, "Sending CLEAN toggle (cover)");
     this->roomba_.cover();
   } else if (command == "dock" || command == "return_to_base") {
+    ESP_LOGI(TAG, "Sending DOCK");
     this->roomba_.dock();
   } else if (command == "locate") {
+    ESP_LOGI(TAG, "Sending LOCATE song");
     uint8_t song[] = {62, 12, 66, 12, 69, 12, 74, 36};
     this->roomba_.safeMode();
     delay(500);
     this->roomba_.song(0, song, sizeof(song));
     this->roomba_.playSong(0);
   } else if (command == "spot" || command == "clean_spot") {
+    ESP_LOGI(TAG, "Sending SPOT");
     this->roomba_.spot();
   } else if (command == "wakeup" || command == "brc_wakeup") {
-    this->brc_wakeup_();
+    // The wake pulse above is the requested action.
+    ESP_LOGI(TAG, "Roomba wake pulse sent");
   } else {
     ESP_LOGW(TAG, "Unknown command: %s", command.c_str());
   }
@@ -76,16 +85,18 @@ std::string RoombaComponent::get_activity_(uint8_t charging, int16_t current) {
 }
 
 void RoombaComponent::setup() {
+  ESP_LOGI(TAG, "Roomba setup: BRC=GPIO%u RX=GPIO%u TX=GPIO%u baud=%d",
+           this->brc_pin_, this->rx_pin_, this->tx_pin_, this->baud_);
+
   pinMode(this->brc_pin_, OUTPUT);
   digitalWrite(this->brc_pin_, HIGH);
 
-  // Start serial + Roomba
-  this->serial_.begin(this->baud_);
+  // Preserve the original working startup behavior. Roomba::start() from the
+  // original library initializes SoftwareSerial at the configured baud itself
+  // and sends OI START (128). Do not call serial_.begin() separately and do not
+  // force SAFE mode here.
   this->roomba_.start();
-
-  // Expose ESPHome native API service (kept from your original approach)
-  // register_service docs: :contentReference[oaicite:1]{index=1}
-  // this->register_service(&RoombaComponent::on_command, "command", {"command"});
+  ESP_LOGI(TAG, "Roomba OI START sent at %d baud", this->baud_);
 }
 
 void RoombaComponent::update() {
@@ -97,7 +108,8 @@ void RoombaComponent::update() {
   uint8_t charging;
   int16_t temperature;
 
-  // Flush serial buffers
+  // Flush unsolicited/stale bytes before issuing the sensor-list request,
+  // matching the original working component.
   while (this->serial_.available()) {
     this->serial_.read();
   }
@@ -109,23 +121,46 @@ void RoombaComponent::update() {
       Roomba::SensorCurrent,              // 2 bytes, mA, signed
       Roomba::SensorBatteryCharge,        // 2 bytes, mAh, unsigned
       Roomba::SensorBatteryCapacity,      // 2 bytes, mAh, unsigned
-      Roomba::SensorBatteryTemperature    // 1 byte, °C, signed
+      Roomba::SensorBatteryTemperature    // 1 byte, C, signed
   };
   uint8_t values[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
+  ESP_LOGD(TAG, "Requesting Roomba sensor packets");
   bool success = this->roomba_.getSensorsList(sensors, sizeof(sensors), values, sizeof(values));
-  if (!success) return;
+  if (!success) {
+    ESP_LOGW(TAG, "No response from Roomba sensor request");
+    return;
+  }
 
-  distance = values[0] * 256 + values[1];
+  // Decode big-endian OI values. Signed values are explicitly sign-extended;
+  // this keeps the corrected decoding from the known working local component.
+  auto u16 = [&](int idx) -> uint16_t {
+    return (uint16_t(values[idx]) << 8) | uint16_t(values[idx + 1]);
+  };
+  auto s16 = [&](int idx) -> int16_t {
+    return int16_t((uint16_t(values[idx]) << 8) | uint16_t(values[idx + 1]));
+  };
+
+  distance = s16(0);
   charging = values[2];
-  voltage  = values[3] * 256 + values[4];
-  current  = values[5] * 256 + values[6];
-  charge   = values[7] * 256 + values[8];
-  capacity = values[9] * 256 + values[10];
-  temperature = static_cast<int8_t>(values[11]);  // signed 1 byte
+  voltage = u16(3);
+  current = s16(5);
+  charge = u16(7);
+  capacity = u16(9);
+  temperature = static_cast<int8_t>(values[11]);
 
-  float battery_level = (capacity > 0) ? (100.0f * (static_cast<float>(charge) / static_cast<float>(capacity))) : 0.0f;
+  float battery_level = 0.0f;
+  if (capacity > 0) {
+    battery_level = 100.0f * (static_cast<float>(charge) / static_cast<float>(capacity));
+    if (battery_level < 0.0f) battery_level = 0.0f;
+    if (battery_level > 100.0f) battery_level = 100.0f;
+  }
+
   std::string activity = this->get_activity_(charging, current);
+
+  ESP_LOGD(TAG,
+           "Sensors OK: distance=%dmm voltage=%umV current=%dmA charge=%umAh capacity=%umAh battery=%.1f%% temp=%dC charging=%u activity=%s",
+           distance, voltage, current, charge, capacity, battery_level, temperature, charging, activity.c_str());
 
   if (distance_sensor_ && distance_sensor_->state != distance) distance_sensor_->publish_state(distance);
   if (voltage_sensor_ && voltage_sensor_->state != voltage) voltage_sensor_->publish_state(voltage);
