@@ -132,10 +132,35 @@ void RoombaComponent::update() {
   };
   uint8_t values[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
-  ESP_LOGD(TAG, "Requesting Roomba sensor packets");
+  ESP_LOGD(TAG, "Requesting Roomba sensor packets with QUERY LIST opcode 149");
   bool success = this->roomba_.getSensorsList(sensors, sizeof(sensors), values, sizeof(values));
   if (!success) {
-    ESP_LOGW(TAG, "No response from Roomba sensor request");
+    ESP_LOGW(TAG, "QUERY LIST 149 timed out; trying single SensorVoltage with opcode 142");
+
+    // Remove any partial/stale bytes before the fallback request.
+    while (this->serial_.available()) {
+      int raw = this->serial_.read();
+      ESP_LOGVV(TAG, "Discarding RX byte after QUERY LIST timeout: 0x%02X", raw & 0xFF);
+    }
+
+    delay(50);
+
+    uint8_t voltage_raw[2] = {0, 0};
+    bool voltage_ok = this->roomba_.getSensors(Roomba::SensorVoltage, voltage_raw, sizeof(voltage_raw));
+    if (!voltage_ok) {
+      ESP_LOGW(TAG, "Single SensorVoltage opcode 142 also timed out; RX available=%d", this->serial_.available());
+      return;
+    }
+
+    uint16_t single_voltage =
+        (static_cast<uint16_t>(voltage_raw[0]) << 8) | static_cast<uint16_t>(voltage_raw[1]);
+
+    ESP_LOGI(TAG, "Single SensorVoltage OK: raw=[0x%02X 0x%02X] voltage=%u mV",
+             voltage_raw[0], voltage_raw[1], single_voltage);
+
+    if (voltage_sensor_ && voltage_sensor_->state != single_voltage) {
+      voltage_sensor_->publish_state(single_voltage);
+    }
     return;
   }
 
